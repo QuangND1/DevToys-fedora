@@ -1,0 +1,93 @@
+name: Build Fedora RPM
+
+on:
+  schedule:
+    - cron: "17 1 * * *"          # mỗi ngày ~08:17 giờ VN, check upstream có bản mới không
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag upstream muốn build (vd v2.0.9.0). Bỏ trống = bản mới nhất"
+        required: false
+      force:
+        description: "Build lại kể cả khi release đã tồn tại"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fedora-rpm
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    env:
+      UPSTREAM: DevToys-app/DevToys
+      ASSET: devtoys_linux_x64_portable.zip
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install tools
+        run: dnf install -y --setopt=install_weak_deps=False rpm-build rpmdevtools jq curl unzip git gh
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve upstream version
+        id: ver
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            # Không dùng /releases/latest: endpoint đó trả về v1.x (bản Windows-only),
+            # còn 2.x đều đang là pre-release. Lấy release mới nhất có asset Linux portable.
+            TAG=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$UPSTREAM/releases?per_page=20" \
+              | jq -r --arg a "$ASSET" '[.[] | select(any(.assets[]; .name == $a))][0].tag_name')
+          fi
+          [ -n "$TAG" ] && [ "$TAG" != "null" ] || { echo "Không tìm thấy release có $ASSET"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ver=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "rel_tag=fedora-$TAG" >> "$GITHUB_OUTPUT"
+          echo "Upstream: $TAG"
+
+      - name: Skip if already built
+        id: check
+        run: |
+          if [ "${{ inputs.force }}" != "true" ] && \
+             gh release view "${{ steps.ver.outputs.rel_tag }}" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Đã có release ${{ steps.ver.outputs.rel_tag }}, bỏ qua."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build RPM
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          rpmdev-setuptree
+          curl -fsSL -o ~/rpmbuild/SOURCES/$ASSET \
+            "https://github.com/$UPSTREAM/releases/download/${{ steps.ver.outputs.tag }}/$ASSET"
+          cp assets/logo/Windows-Linux/Stable/Icon-Windows-Linux.png ~/rpmbuild/SOURCES/devtoys.png
+          rpmbuild -bb --define "ver ${{ steps.ver.outputs.ver }}" packaging/fedora/devtoys.spec
+          mkdir -p dist && cp ~/rpmbuild/RPMS/x86_64/*.rpm dist/
+          ls -lh dist
+
+      - name: Smoke test (cài thử, kiểm tra deps resolve được)
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          dnf install -y ./dist/*.rpm
+          rpm -ql devtoys | grep -q /opt/devtoys/Plugins/DevToys.Tools/
+          test -x /opt/devtoys/DevToys.Linux
+
+      - name: Publish release
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          REL="${{ steps.ver.outputs.rel_tag }}"
+          gh release delete "$REL" -R "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$REL" dist/*.rpm -R "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "DevToys ${{ steps.ver.outputs.ver }} (Fedora RPM)" \
+            --notes "Repackage từ [upstream ${{ steps.ver.outputs.tag }}](https://github.com/$UPSTREAM/releases/tag/${{ steps.ver.outputs.tag }}).
+
+          \`\`\`bash
+          sudo dnf install https://github.com/${{ github.repository }}/releases/download/$REL/$(basename dist/*.rpm)
+          \`\`\`"
