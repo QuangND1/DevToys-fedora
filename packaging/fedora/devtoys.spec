@@ -13,7 +13,7 @@
 
 Name:           devtoys
 Version:        %{ver}
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        A Swiss Army knife for developers
 License:        MIT
 URL:            https://github.com/DevToys-app/DevToys
@@ -46,8 +46,15 @@ install -d %{buildroot}/opt/devtoys
 cp -a . %{buildroot}/opt/devtoys/
 chmod 0755 %{buildroot}/opt/devtoys/DevToys.Linux
 
+# Launcher: WebKitGTK trên Wayland bị nháy/mất vùng vẽ (nhất là máy hybrid NVIDIA),
+# nên mặc định chạy qua XWayland. Muốn chạy Wayland thì: GDK_BACKEND=wayland devtoys
 install -d %{buildroot}%{_bindir}
-ln -s /opt/devtoys/DevToys.Linux %{buildroot}%{_bindir}/devtoys
+cat > %{buildroot}%{_bindir}/devtoys <<'EOF'
+#!/bin/sh
+export GDK_BACKEND="${GDK_BACKEND:-x11}"
+exec /opt/devtoys/DevToys.Linux "$@"
+EOF
+chmod 0755 %{buildroot}%{_bindir}/devtoys
 
 install -Dm0644 %{SOURCE1} %{buildroot}%{_datadir}/pixmaps/devtoys.png
 
@@ -56,7 +63,7 @@ cat > %{buildroot}%{_datadir}/applications/devtoys.desktop <<'EOF'
 [Desktop Entry]
 Name=DevToys
 Comment=A Swiss Army knife for developers
-Exec=/opt/devtoys/DevToys.Linux
+Exec=%{_bindir}/devtoys
 Icon=devtoys
 Terminal=false
 Type=Application
@@ -71,5 +78,6 @@ EOF
 %{_datadir}/pixmaps/devtoys.png
 
 %changelog
-* Mon Oct 19 2026 QuangND1 <quang.nd1991@gmail.com> - %{ver}-1
+* Mon Oct 19 2026 QuangND1 <quang.nd1991@gmail.com> - %{ver}-2
 - Repackage upstream portable build
+- Launcher mặc định GDK_BACKEND=x11 để tránh nháy trên Wayland
