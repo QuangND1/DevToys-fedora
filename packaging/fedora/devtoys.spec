@@ -13,7 +13,7 @@
 
 Name:           devtoys
 Version:        %{ver}
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        A Swiss Army knife for developers
 License:        MIT
 URL:            https://github.com/DevToys-app/DevToys
@@ -44,17 +44,21 @@ unzip -q %{SOURCE0}
 %install
 install -d %{buildroot}/opt/devtoys
 cp -a . %{buildroot}/opt/devtoys/
-chmod 0755 %{buildroot}/opt/devtoys/DevToys.Linux
-
-# Launcher: WebKitGTK trên Wayland bị nháy/mất vùng vẽ (nhất là máy hybrid NVIDIA),
+# WebKitGTK trên Wayland bị nháy/mất vùng vẽ (nhất là máy hybrid NVIDIA),
 # nên mặc định chạy qua XWayland. Muốn chạy Wayland thì: GDK_BACKEND=wayland devtoys
-install -d %{buildroot}%{_bindir}
-cat > %{buildroot}%{_bindir}/devtoys <<'EOF'
+# Wrapper đặt ngay tại /opt/devtoys/DevToys.Linux (binary thật đổi tên thành .bin)
+# để mọi cách mở (menu, dock đã ghim, GNOME Shell còn cache Exec cũ) đều đi qua nó.
+mv %{buildroot}/opt/devtoys/DevToys.Linux %{buildroot}/opt/devtoys/DevToys.Linux.bin
+chmod 0755 %{buildroot}/opt/devtoys/DevToys.Linux.bin
+cat > %{buildroot}/opt/devtoys/DevToys.Linux <<'EOF'
 #!/bin/sh
 export GDK_BACKEND="${GDK_BACKEND:-x11}"
-exec /opt/devtoys/DevToys.Linux "$@"
+exec /opt/devtoys/DevToys.Linux.bin "$@"
 EOF
-chmod 0755 %{buildroot}%{_bindir}/devtoys
+chmod 0755 %{buildroot}/opt/devtoys/DevToys.Linux
+
+install -d %{buildroot}%{_bindir}
+ln -s /opt/devtoys/DevToys.Linux %{buildroot}%{_bindir}/devtoys
 
 install -Dm0644 %{SOURCE1} %{buildroot}%{_datadir}/pixmaps/devtoys.png
 
@@ -78,6 +82,9 @@ EOF
 %{_datadir}/pixmaps/devtoys.png
 
 %changelog
+* Mon Oct 19 2026 QuangND1 <quang.nd1991@gmail.com> - %{ver}-3
+- Chuyển wrapper GDK_BACKEND=x11 vào /opt/devtoys/DevToys.Linux
+
 * Mon Oct 19 2026 QuangND1 <quang.nd1991@gmail.com> - %{ver}-2
 - Repackage upstream portable build
 - Launcher mặc định GDK_BACKEND=x11 để tránh nháy trên Wayland
